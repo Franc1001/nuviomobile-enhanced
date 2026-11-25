@@ -92,6 +92,9 @@ import nuvio.composeapp.generated.resources.live_tv_username
 import nuvio.composeapp.generated.resources.live_tv_xtream_description
 import nuvio.composeapp.generated.resources.live_tv_xtream_server
 import nuvio.composeapp.generated.resources.live_tv_xtream_title
+import nuvio.composeapp.generated.resources.live_tv_settings_sidebar_description
+import nuvio.composeapp.generated.resources.live_tv_settings_sidebar_title
+import com.nuvio.app.features.livetv.LiveTvChannelViewMode
 import org.jetbrains.compose.resources.stringResource
 
 internal fun LazyListScope.liveTvSettingsContent(
@@ -109,6 +112,18 @@ internal fun LazyListScope.liveTvSettingsContent(
                         isTablet = isTablet,
                         enabled = uiState.isNavigationEnabled,
                         onEnabledChanged = LiveTvRepository::setNavigationEnabled,
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.live_tv_settings_sidebar_title),
+                        description = stringResource(Res.string.live_tv_settings_sidebar_description),
+                        checked = uiState.channelViewMode == LiveTvChannelViewMode.Sidebar,
+                        isTablet = isTablet,
+                        onCheckedChange = { enabled ->
+                            LiveTvRepository.setChannelViewMode(
+                                if (enabled) LiveTvChannelViewMode.Sidebar else LiveTvChannelViewMode.List,
+                            )
+                        },
                     )
                 }
             }

@@ -78,7 +78,7 @@ data class LiveTvUiState(
     val favoriteChannelIds: Set<String> = emptySet(),
     val lastWatchedChannelId: String? = null,
     val recentChannelIds: List<String> = emptyList(),
-    val isChannelGridEnabled: Boolean = false,
+    val channelViewMode: LiveTvChannelViewMode = LiveTvChannelViewMode.List,
     val isNavigationEnabled: Boolean = true,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
@@ -94,4 +94,19 @@ data class LiveTvUiState(
 
     val showInNavigation: Boolean
         get() = hasPlaylist && isNavigationEnabled
+
+    val isChannelGridEnabled: Boolean
+        get() = channelViewMode == LiveTvChannelViewMode.Grid
+}
+
+enum class LiveTvChannelViewMode(val storageValue: String) {
+    List("list"),
+    Grid("grid"),
+    Sidebar("sidebar"),
+    ;
+
+    companion object {
+        fun fromStorage(value: String?): LiveTvChannelViewMode =
+            entries.firstOrNull { it.storageValue == value } ?: List
+    }
 }

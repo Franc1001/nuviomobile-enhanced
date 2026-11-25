@@ -985,6 +985,11 @@
     <string name="live_tv_action_search">Search channels</string>
     <string name="live_tv_action_grid_view">Grid view</string>
     <string name="live_tv_action_list_view">List view</string>
+    <string name="live_tv_action_sidebar_view">Category sidebar</string>
+    <string name="live_tv_action_change_layout">Change layout</string>
+    <string name="live_tv_settings_sidebar_title">Category sidebar layout</string>
+    <string name="live_tv_settings_sidebar_description">Show categories in a side column with channels next to them</string>
+    <string name="live_tv_sidebar_channel_count">%1$d channels</string>
     <string name="live_tv_section_guide">Guide</string>
     <string name="live_tv_section_sports">Sports</string>
     <string name="live_tv_section_on_demand">On Demand</string>

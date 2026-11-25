@@ -49,7 +49,7 @@ object LiveTvRepository {
             favoriteChannelIds = loadFavoriteChannelIds(),
             lastWatchedChannelId = LiveTvStorage.loadLastWatchedChannelId(),
             recentChannelIds = loadRecentChannelIds(),
-            isChannelGridEnabled = LiveTvStorage.loadChannelViewMode() == "grid",
+            channelViewMode = LiveTvChannelViewMode.fromStorage(LiveTvStorage.loadChannelViewMode()),
             isNavigationEnabled = LiveTvStorage.loadNavigationEnabled() ?: true,
             epgSources = decodeEpgSources(LiveTvStorage.loadEpgSourcesBlob().orEmpty()),
             isEpgAutoDetectEnabled = LiveTvStorage.loadEpgAutoDetectEnabled() ?: true,
@@ -606,9 +606,13 @@ object LiveTvRepository {
     }
 
     fun setChannelGridEnabled(enabled: Boolean) {
+        setChannelViewMode(if (enabled) LiveTvChannelViewMode.Grid else LiveTvChannelViewMode.List)
+    }
+
+    fun setChannelViewMode(mode: LiveTvChannelViewMode) {
         ensureLoaded()
-        LiveTvStorage.saveChannelViewMode(if (enabled) "grid" else "list")
-        _uiState.value = _uiState.value.copy(isChannelGridEnabled = enabled)
+        LiveTvStorage.saveChannelViewMode(mode.storageValue)
+        _uiState.value = _uiState.value.copy(channelViewMode = mode)
     }
 
     fun clearRecentChannels() {
