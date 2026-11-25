@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.nuvio.app.features.livetv
 
 import androidx.compose.animation.AnimatedVisibility
