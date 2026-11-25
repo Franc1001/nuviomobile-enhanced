@@ -35,6 +35,10 @@ import com.nuvio.app.features.livetv.LiveTvRepository
 import com.nuvio.app.features.livetv.LiveTvStalkerSettings
 import com.nuvio.app.features.livetv.LiveTvUiState
 import com.nuvio.app.features.livetv.LiveTvXtreamSettings
+import com.nuvio.app.features.livetv.LIVE_TV_XTREAM_MAX_SERVERS
+import nuvio.composeapp.generated.resources.live_tv_xtream_backup_description
+import nuvio.composeapp.generated.resources.live_tv_xtream_backup_server
+import nuvio.composeapp.generated.resources.live_tv_xtream_backup_title
 import com.nuvio.app.features.livetv.rememberLiveTvPlaylistFilePicker
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_remove
@@ -95,6 +99,12 @@ import nuvio.composeapp.generated.resources.live_tv_xtream_title
 import nuvio.composeapp.generated.resources.live_tv_settings_sidebar_description
 import nuvio.composeapp.generated.resources.live_tv_settings_sidebar_title
 import com.nuvio.app.features.livetv.LiveTvChannelViewMode
+import nuvio.composeapp.generated.resources.live_tv_settings_merge_title
+import nuvio.composeapp.generated.resources.live_tv_settings_merge_description
+import nuvio.composeapp.generated.resources.live_tv_settings_preview_title
+import nuvio.composeapp.generated.resources.live_tv_settings_preview_description
+import nuvio.composeapp.generated.resources.live_tv_settings_glass_title
+import nuvio.composeapp.generated.resources.live_tv_settings_glass_description
 import org.jetbrains.compose.resources.stringResource
 
 internal fun LazyListScope.liveTvSettingsContent(
@@ -124,6 +134,30 @@ internal fun LazyListScope.liveTvSettingsContent(
                                 if (enabled) LiveTvChannelViewMode.Sidebar else LiveTvChannelViewMode.List,
                             )
                         },
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.live_tv_settings_merge_title),
+                        description = stringResource(Res.string.live_tv_settings_merge_description),
+                        checked = uiState.isVersionMergeEnabled,
+                        isTablet = isTablet,
+                        onCheckedChange = LiveTvRepository::setVersionMergeEnabled,
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.live_tv_settings_preview_title),
+                        description = stringResource(Res.string.live_tv_settings_preview_description),
+                        checked = uiState.isPreviewEnabled,
+                        isTablet = isTablet,
+                        onCheckedChange = LiveTvRepository::setPreviewEnabled,
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.live_tv_settings_glass_title),
+                        description = stringResource(Res.string.live_tv_settings_glass_description),
+                        checked = uiState.isGlassEnabled,
+                        isTablet = isTablet,
+                        onCheckedChange = LiveTvRepository::setGlassEnabled,
                     )
                 }
             }
@@ -501,6 +535,11 @@ private fun LiveTvProviderSettingsRow(isTablet: Boolean, uiState: LiveTvUiState)
     var xtreamServer by rememberSaveable(uiState.xtreamSettings.serverUrl) { mutableStateOf(uiState.xtreamSettings.serverUrl) }
     var xtreamUser by rememberSaveable(uiState.xtreamSettings.username) { mutableStateOf(uiState.xtreamSettings.username) }
     var xtreamPassword by rememberSaveable(uiState.xtreamSettings.password) { mutableStateOf(uiState.xtreamSettings.password) }
+    // Backup servers, one per line, so the state survives as a single saveable string.
+    var xtreamBackups by rememberSaveable(uiState.xtreamSettings.backupServerUrls) {
+        mutableStateOf(uiState.xtreamSettings.backupServerUrls.joinToString("\n"))
+    }
+    val backupList = xtreamBackups.split('\n')
     var stalkerPortal by rememberSaveable(uiState.stalkerSettings.portalUrl) { mutableStateOf(uiState.stalkerSettings.portalUrl) }
     var stalkerMac by rememberSaveable(uiState.stalkerSettings.macAddress) { mutableStateOf(uiState.stalkerSettings.macAddress) }
     var stalkerUser by rememberSaveable(uiState.stalkerSettings.username) { mutableStateOf(uiState.stalkerSettings.username) }
@@ -512,9 +551,44 @@ private fun LiveTvProviderSettingsRow(isTablet: Boolean, uiState: LiveTvUiState)
         OutlinedTextField(xtreamServer, { xtreamServer = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(Res.string.live_tv_xtream_server)) })
         OutlinedTextField(xtreamUser, { xtreamUser = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(Res.string.live_tv_username)) })
         OutlinedTextField(xtreamPassword, { xtreamPassword = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text(stringResource(Res.string.live_tv_password)) })
+        Text(
+            stringResource(Res.string.live_tv_xtream_backup_title),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            stringResource(Res.string.live_tv_xtream_backup_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Filled fields plus one empty field, up to four backups (five servers in all).
+        val shownBackupFields = (backupList.count { it.isNotBlank() } + 1)
+            .coerceAtMost(LIVE_TV_XTREAM_MAX_SERVERS - 1)
+        for (index in 0 until shownBackupFields) {
+            OutlinedTextField(
+                value = backupList.getOrNull(index).orEmpty(),
+                onValueChange = { value ->
+                    val updated = MutableList(maxOf(backupList.size, index + 1)) { backupList.getOrNull(it).orEmpty() }
+                    updated[index] = value.replace("\n", "").trim()
+                    xtreamBackups = updated.joinToString("\n")
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text(stringResource(Res.string.live_tv_xtream_backup_server, index + 1)) },
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
-                onClick = { LiveTvRepository.saveXtreamSettings(LiveTvXtreamSettings(xtreamServer, xtreamUser, xtreamPassword)) },
+                onClick = {
+                    LiveTvRepository.saveXtreamSettings(
+                        LiveTvXtreamSettings(
+                            serverUrl = xtreamServer,
+                            username = xtreamUser,
+                            password = xtreamPassword,
+                            backupServerUrls = backupList.filter(String::isNotBlank),
+                        ),
+                    )
+                },
                 enabled = xtreamServer.isNotBlank() && xtreamUser.isNotBlank() && xtreamPassword.isNotBlank(),
             ) { Text(stringResource(Res.string.live_tv_connect)) }
             if (uiState.xtreamSettings.isConfigured) OutlinedButton(onClick = LiveTvRepository::removeXtream) { Text(stringResource(Res.string.live_tv_disconnect)) }

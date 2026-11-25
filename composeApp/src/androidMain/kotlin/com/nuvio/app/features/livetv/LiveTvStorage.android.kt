@@ -110,11 +110,11 @@ actual object LiveTvStorage {
     actual fun loadXtreamSettings(): LiveTvXtreamSettings =
         preferences?.getString(ProfileScopedKey.of(xtreamSettingsKey), null)
             ?.split('\u001F')
-            ?.let { LiveTvXtreamSettings(it.getOrNull(0).orEmpty(), it.getOrNull(1).orEmpty(), it.getOrNull(2).orEmpty(), it.getOrNull(3) != "false") }
+            ?.let { LiveTvXtreamSettings(it.getOrNull(0).orEmpty(), it.getOrNull(1).orEmpty(), it.getOrNull(2).orEmpty(), it.getOrNull(3) != "false", it.getOrNull(4).orEmpty().split("\u001E").filter(String::isNotBlank)) }
             ?: LiveTvXtreamSettings()
 
     actual fun saveXtreamSettings(settings: LiveTvXtreamSettings) {
-        preferences?.edit()?.putString(ProfileScopedKey.of(xtreamSettingsKey), listOf(settings.serverUrl, settings.username, settings.password, settings.isEnabled).joinToString("\u001F"))?.apply()
+        preferences?.edit()?.putString(ProfileScopedKey.of(xtreamSettingsKey), listOf(settings.serverUrl, settings.username, settings.password, settings.isEnabled, settings.backupServerUrls.joinToString("\u001E")).joinToString("\u001F"))?.apply()
     }
 
     actual fun publishNavigationVisibility(visible: Boolean) = Unit
@@ -140,5 +140,14 @@ actual object LiveTvStorage {
             ?.edit()
             ?.putBoolean(ProfileScopedKey.of(epgAutoDetectEnabledKey), enabled)
             ?.apply()
+    }
+
+    actual fun loadValue(key: String): String? =
+        preferences?.getString(ProfileScopedKey.of("option_$key"), null)
+
+    actual fun saveValue(key: String, value: String?) {
+        val editor = preferences?.edit() ?: return
+        if (value == null) editor.remove(ProfileScopedKey.of("option_$key")) else editor.putString(ProfileScopedKey.of("option_$key"), value)
+        editor.apply()
     }
 }

@@ -21,7 +21,7 @@ private val playlistRequestHeaders = mapOf("Accept" to "application/json, text/p
 private val streamRequestHeaders = mapOf("User-Agent" to LIVE_TV_STREAM_USER_AGENT, "Accept" to "*/*")
 
 internal suspend fun fetchXtreamChannels(settings: LiveTvXtreamSettings): List<LiveTvChannel> {
-    val normalized = settings.normalized()
+    val normalized = LiveTvXtreamFailover.resolve(settings)
     val categories = xtreamRequest(normalized, "get_live_categories").arrayOrEmpty().mapNotNull { element ->
         val item = element as? JsonObject ?: return@mapNotNull null
         val id = item.string("category_id") ?: item.string("id") ?: return@mapNotNull null
@@ -199,8 +199,9 @@ private fun stalkerHeaders(settings: LiveTvStalkerSettings, token: String?): Map
     if (!token.isNullOrBlank()) put("Authorization", "Bearer $token")
 }
 
+// On the server that answered last (see LiveTvXtreamFailover).
 private fun LiveTvXtreamSettings.normalized() = copy(
-    serverUrl = serverUrl.trim().trimEnd('/').substringBefore("/player_api.php").trimEnd('/'),
+    serverUrl = LiveTvXtreamFailover.activeServerUrl(this),
     username = username.trim(), password = password.trim(),
 )
 private fun LiveTvXtreamSettings.liveStreamUrl(id: String, extension: String) =
@@ -237,7 +238,7 @@ internal suspend fun fetchXtreamVodCatalog(
     settings: LiveTvXtreamSettings,
     kind: LiveTvVodKind,
 ): LiveTvVodCatalog {
-    val normalized = settings.normalized()
+    val normalized = LiveTvXtreamFailover.resolve(settings)
     val (categoryAction, listAction) = when (kind) {
         LiveTvVodKind.Movies -> "get_vod_categories" to "get_vod_streams"
         LiveTvVodKind.Series -> "get_series_categories" to "get_series"
@@ -281,7 +282,7 @@ internal suspend fun fetchXtreamSeriesEpisodes(
     settings: LiveTvXtreamSettings,
     seriesId: String,
 ): List<LiveTvVodEpisode> {
-    val normalized = settings.normalized()
+    val normalized = LiveTvXtreamFailover.resolve(settings)
     val root = xtreamRequest(normalized, "get_series_info", mapOf("series_id" to seriesId)) as? JsonObject
         ?: return emptyList()
     val episodes = root["episodes"]

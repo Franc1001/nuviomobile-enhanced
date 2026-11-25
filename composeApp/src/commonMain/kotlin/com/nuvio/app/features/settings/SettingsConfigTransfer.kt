@@ -584,6 +584,7 @@ internal object SettingsConfigTransfer {
                         put("username", xtream.username)
                         put("password", xtream.password)
                         put("enabled", xtream.isEnabled)
+                        put("backup_server_urls", buildJsonArray { xtream.backupServerUrls.forEach { add(JsonPrimitive(it)) } })
                     },
                 )
             }
@@ -635,6 +636,7 @@ internal object SettingsConfigTransfer {
                 username = xtream.string("username").orEmpty(),
                 password = xtream.string("password").orEmpty(),
                 isEnabled = xtream.boolean("enabled") ?: true,
+                backupServerUrls = xtream.strings("backup_server_urls"),
             ).takeIf { it.isConfigured }?.let(LiveTvRepository::saveXtreamSettings)
         }
         payload.boolean("epg_auto_detect_enabled")?.let(LiveTvRepository::setEpgAutoDetectEnabled)

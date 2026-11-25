@@ -24,6 +24,12 @@ import kotlin.time.Clock
 
 object LiveTvRepository {
     private val log = Logger.withTag("LiveTvRepository")
+    private const val KEY_CATEGORY_SORT = "category_sort"
+    private const val KEY_CATEGORY_ORDER = "category_order"
+    private const val KEY_MERGE_VERSIONS = "merge_versions"
+    private const val KEY_PREFERRED_VERSIONS = "preferred_versions"
+    private const val KEY_PREVIEW = "channel_preview"
+    private const val KEY_GLASS = "glass_ui"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val _uiState = MutableStateFlow(LiveTvUiState())
     val uiState: StateFlow<LiveTvUiState> = _uiState.asStateFlow()
@@ -50,6 +56,13 @@ object LiveTvRepository {
             lastWatchedChannelId = LiveTvStorage.loadLastWatchedChannelId(),
             recentChannelIds = loadRecentChannelIds(),
             channelViewMode = LiveTvChannelViewMode.fromStorage(LiveTvStorage.loadChannelViewMode()),
+            categorySortMode = LiveTvCategorySortMode.fromStorage(LiveTvStorage.loadValue(KEY_CATEGORY_SORT)),
+            customCategoryOrder = LiveTvStorage.loadValue(KEY_CATEGORY_ORDER).orEmpty()
+                .split('\n').filter(String::isNotBlank),
+            isVersionMergeEnabled = LiveTvStorage.loadValue(KEY_MERGE_VERSIONS) != "false",
+            preferredVersionIds = decodePreferredVersions(LiveTvStorage.loadValue(KEY_PREFERRED_VERSIONS)),
+            isPreviewEnabled = LiveTvStorage.loadValue(KEY_PREVIEW) != "false",
+            isGlassEnabled = LiveTvStorage.loadValue(KEY_GLASS) != "false",
             isNavigationEnabled = LiveTvStorage.loadNavigationEnabled() ?: true,
             epgSources = decodeEpgSources(LiveTvStorage.loadEpgSourcesBlob().orEmpty()),
             isEpgAutoDetectEnabled = LiveTvStorage.loadEpgAutoDetectEnabled() ?: true,
@@ -268,11 +281,18 @@ object LiveTvRepository {
 
     fun saveXtreamSettings(settings: LiveTvXtreamSettings) {
         ensureLoaded()
+        val mainServer = normalizeXtreamServerUrl(settings.serverUrl)
         val normalized = settings.copy(
-            serverUrl = settings.serverUrl.trim().trimEnd('/').substringBefore("/player_api.php").trimEnd('/'),
+            serverUrl = mainServer,
             username = settings.username.trim(),
             password = settings.password.trim(),
+            backupServerUrls = settings.backupServerUrls
+                .map(::normalizeXtreamServerUrl)
+                .filter { it.isNotBlank() && it != mainServer }
+                .distinct()
+                .take(LIVE_TV_XTREAM_MAX_SERVERS - 1),
         )
+        LiveTvXtreamFailover.reset()
         LiveTvStorage.saveXtreamSettings(normalized)
         _uiState.value = _uiState.value.copy(xtreamSettings = normalized, errorMessage = null)
         publishNavigationVisibility()
@@ -290,9 +310,26 @@ object LiveTvRepository {
         refreshEpg(force = true)
     }
 
-    suspend fun prepareForPlayback(channel: LiveTvChannel): LiveTvChannel =
-        if (channel.stalkerCommand.isNullOrBlank()) channel
+    suspend fun prepareForPlayback(channel: LiveTvChannel): LiveTvChannel {
+        val xtream = _uiState.value.xtreamSettings
+        if (channel.isXtreamChannel() && xtream.isConfigured) {
+            // Play from the server that answered last, and give this channel a fresh set of retries.
+            LiveTvXtreamFailover.startPlayback(channel.id)
+            return channel.copy(streamUrl = LiveTvXtreamFailover.rewriteToActiveServer(channel.streamUrl, xtream))
+        }
+        return if (channel.stalkerCommand.isNullOrBlank()) channel
         else preparePortalChannelForPlayback(channel, _uiState.value.stalkerSettings)
+    }
+
+    /**
+     * The same stream on the next Xtream server, after [failedUrl] failed to play, or null when the
+     * URL is not an Xtream stream or every server has been tried for it.
+     */
+    fun nextXtreamServerUrl(failedUrl: String): String? {
+        val xtream = _uiState.value.xtreamSettings
+        if (!xtream.isConfigured || !xtream.isEnabled) return null
+        return LiveTvXtreamFailover.nextUrlAfterFailure(failedUrl, xtream)
+    }
 
     fun refresh() {
         ensureLoaded()
@@ -614,6 +651,59 @@ object LiveTvRepository {
         LiveTvStorage.saveChannelViewMode(mode.storageValue)
         _uiState.value = _uiState.value.copy(channelViewMode = mode)
     }
+
+    fun setCategorySortMode(mode: LiveTvCategorySortMode) {
+        ensureLoaded()
+        LiveTvStorage.saveValue(KEY_CATEGORY_SORT, mode.storageValue)
+        _uiState.value = _uiState.value.copy(categorySortMode = mode)
+    }
+
+    /** Saves [order] as the custom category order and switches to it. */
+    fun setCustomCategoryOrder(order: List<String>) {
+        ensureLoaded()
+        val cleaned = order.map(String::trim).filter(String::isNotBlank).distinctBy(String::lowercase)
+        LiveTvStorage.saveValue(KEY_CATEGORY_ORDER, cleaned.joinToString("\n"))
+        LiveTvStorage.saveValue(KEY_CATEGORY_SORT, LiveTvCategorySortMode.Custom.storageValue)
+        _uiState.value = _uiState.value.copy(
+            customCategoryOrder = cleaned,
+            categorySortMode = LiveTvCategorySortMode.Custom,
+        )
+    }
+
+    fun setVersionMergeEnabled(enabled: Boolean) {
+        ensureLoaded()
+        LiveTvStorage.saveValue(KEY_MERGE_VERSIONS, enabled.toString())
+        _uiState.value = _uiState.value.copy(isVersionMergeEnabled = enabled)
+    }
+
+    /** Remembers [channelId] as the version that plays for the merged channel [versionKey]. */
+    fun setPreferredVersion(versionKey: String, channelId: String) {
+        ensureLoaded()
+        val updated = _uiState.value.preferredVersionIds + (versionKey to channelId)
+        LiveTvStorage.saveValue(KEY_PREFERRED_VERSIONS, encodePreferredVersions(updated))
+        _uiState.value = _uiState.value.copy(preferredVersionIds = updated)
+    }
+
+    fun setPreviewEnabled(enabled: Boolean) {
+        ensureLoaded()
+        LiveTvStorage.saveValue(KEY_PREVIEW, enabled.toString())
+        _uiState.value = _uiState.value.copy(isPreviewEnabled = enabled)
+    }
+
+    fun setGlassEnabled(enabled: Boolean) {
+        ensureLoaded()
+        LiveTvStorage.saveValue(KEY_GLASS, enabled.toString())
+        _uiState.value = _uiState.value.copy(isGlassEnabled = enabled)
+    }
+
+    private fun encodePreferredVersions(map: Map<String, String>): String =
+        map.entries.joinToString("\n") { (key, id) -> "$key\u001E$id" }
+
+    private fun decodePreferredVersions(blob: String?): Map<String, String> =
+        blob.orEmpty().split('\n').mapNotNull { line ->
+            val parts = line.split('\u001E')
+            if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) parts[0] to parts[1] else null
+        }.toMap()
 
     fun clearRecentChannels() {
         ensureLoaded()

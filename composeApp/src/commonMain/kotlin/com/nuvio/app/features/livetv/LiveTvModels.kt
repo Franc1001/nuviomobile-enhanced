@@ -52,9 +52,24 @@ data class LiveTvXtreamSettings(
     val username: String = "",
     val password: String = "",
     val isEnabled: Boolean = true,
+    /** Extra server addresses for the same account, tried in order when the main one fails. */
+    val backupServerUrls: List<String> = emptyList(),
 ) {
     val isConfigured: Boolean get() = serverUrl.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+
+    /** The main server first, then the backups: normalized, without duplicates, at most [LIVE_TV_XTREAM_MAX_SERVERS]. */
+    val allServerUrls: List<String>
+        get() = (listOf(serverUrl) + backupServerUrls)
+            .map(::normalizeXtreamServerUrl)
+            .filter(String::isNotBlank)
+            .distinct()
+            .take(LIVE_TV_XTREAM_MAX_SERVERS)
 }
+
+const val LIVE_TV_XTREAM_MAX_SERVERS = 5
+
+fun normalizeXtreamServerUrl(url: String): String =
+    url.trim().trimEnd('/').substringBefore("/player_api.php").trimEnd('/')
 
 enum class LiveTvPlaylistType {
     Url,
@@ -79,6 +94,17 @@ data class LiveTvUiState(
     val lastWatchedChannelId: String? = null,
     val recentChannelIds: List<String> = emptyList(),
     val channelViewMode: LiveTvChannelViewMode = LiveTvChannelViewMode.List,
+    val categorySortMode: LiveTvCategorySortMode = LiveTvCategorySortMode.Alphabetical,
+    /** Category names in the order the person arranged them, for [LiveTvCategorySortMode.Custom]. */
+    val customCategoryOrder: List<String> = emptyList(),
+    /** Whether the versions of one channel (HD, FHD, SD…) show as one entry in the sidebar layout. */
+    val isVersionMergeEnabled: Boolean = true,
+    /** The version chosen for each merged channel, by its version key. */
+    val preferredVersionIds: Map<String, String> = emptyMap(),
+    /** Whether the sidebar layout plays a muted preview of the highlighted channel. */
+    val isPreviewEnabled: Boolean = true,
+    /** Whether the sidebar layout uses translucent glass panels. */
+    val isGlassEnabled: Boolean = true,
     val isNavigationEnabled: Boolean = true,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,

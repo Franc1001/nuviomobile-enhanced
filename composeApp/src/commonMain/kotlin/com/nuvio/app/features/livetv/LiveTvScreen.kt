@@ -233,12 +233,56 @@ fun LiveTvScreen(
         uiState.favoriteChannelIds.isNotEmpty() &&
             uiState.channels.any { it.id in uiState.favoriteChannelIds }
     }
-    val categoryChips = remember(categoryOptions, uiState.channels, uncategorizedLabel) {
+    val categoryChips = remember(
+        categoryOptions,
+        uiState.channels,
+        uncategorizedLabel,
+        uiState.categorySortMode,
+        uiState.customCategoryOrder,
+    ) {
         val hasUncategorized = uiState.channels.any { it.group.isNullOrBlank() }
-        categoryOptions
+        val playlistOrder = categoryOptions
             .filter { it.mode == LiveTvChannelFilterMode.Category }
             .filter { hasUncategorized || it.categoryName != uncategorizedLabel }
             .mapNotNull { it.categoryName }
+        val totals = uiState.channels
+            .groupingBy { categoryNameForChannel(it, uncategorizedLabel).lowercase() }
+            .eachCount()
+        sortLiveTvCategories(
+            categories = playlistOrder,
+            counts = totals,
+            mode = uiState.categorySortMode,
+            customOrder = uiState.customCategoryOrder,
+        )
+    }
+    var showCategorySortSheet by rememberSaveable { mutableStateOf(false) }
+
+    // Each channel's version key, worked out once per channel list away from the main thread, so
+    // switching category or typing a search only groups channels by a key already known.
+    val versionKeys by produceState(initialValue = emptyMap<String, String>(), uiState.channels) {
+        value = withContext(Dispatchers.Default) {
+            uiState.channels.associate { it.id to liveTvVersionKey(it) }
+        }
+    }
+    val mergeVersions = uiState.isVersionMergeEnabled && uiState.channelViewMode == LiveTvChannelViewMode.Sidebar
+    val sidebarRows by produceState(
+        initialValue = emptyList<LiveTvMergedChannel>(),
+        visibleChannels,
+        versionKeys,
+        mergeVersions,
+        uiState.preferredVersionIds,
+        uiState.channelViewMode,
+    ) {
+        if (uiState.channelViewMode != LiveTvChannelViewMode.Sidebar) return@produceState
+        value = withContext(Dispatchers.Default) {
+            if (mergeVersions) {
+                mergeLiveTvChannelVersions(visibleChannels, uiState.preferredVersionIds) { channel ->
+                    versionKeys[channel.id] ?: liveTvVersionKey(channel)
+                }
+            } else {
+                unmergedLiveTvChannels(visibleChannels)
+            }
+        }
     }
 
     LaunchedEffect(hasRecents, hasFavorites, filterMode) {
@@ -796,13 +840,20 @@ fun LiveTvScreen(
                     item(key = "channel-sidebar") {
                         LiveTvSidebarLayout(
                             entries = sidebarEntries,
-                            channels = visibleChannels,
+                            rows = sidebarRows,
                             favoriteChannelIds = uiState.favoriteChannelIds,
                             epgPrograms = uiState.epgPrograms,
                             nowMillis = epgNowMillis,
+                            previewEnabled = uiState.isPreviewEnabled,
+                            glassEnabled = uiState.isGlassEnabled,
+                            onPlay = playChannel,
                             onFavoriteClick = { channel -> LiveTvRepository.toggleFavoriteChannel(channel.id) },
-                            onPlayClick = playChannel,
                             onGuideClick = { channel -> guideChannelId = channel.id },
+                            onVersionChosen = { row, version ->
+                                LiveTvRepository.setPreferredVersion(row.key, version.id)
+                                playChannel(version)
+                            },
+                            onSortCategoriesClick = { showCategorySortSheet = true },
                             onClearRecents = if (filterMode == LiveTvChannelFilterMode.Recents) {
                                 LiveTvRepository::clearRecentChannels
                             } else {
@@ -872,6 +923,16 @@ fun LiveTvScreen(
                     playChannel(guideChannel)
                 },
                 onDismiss = { guideChannelId = null },
+            )
+        }
+
+        if (showCategorySortSheet) {
+            LiveTvCategorySortSheet(
+                mode = uiState.categorySortMode,
+                categories = categoryChips,
+                onModeSelected = LiveTvRepository::setCategorySortMode,
+                onCustomOrderSaved = LiveTvRepository::setCustomCategoryOrder,
+                onDismiss = { showCategorySortSheet = false },
             )
         }
 
@@ -1627,7 +1688,7 @@ private fun LiveTvCategoryLine(categoryName: String) {
 }
 
 @Composable
-private fun ChannelLogo(
+internal fun ChannelLogo(
     channel: LiveTvChannel,
     modifier: Modifier = Modifier.size(64.dp),
     shape: RoundedCornerShape = RoundedCornerShape(14.dp),
@@ -1715,8 +1776,8 @@ private fun buildLiveTvCategoryFilterOptions(
                 category.equals(favoritesLabel, ignoreCase = true) ||
                 category.equals(uncategorizedLabel, ignoreCase = true)
         }
-        .sortedBy { it.lowercase() }
 
+    // Kept in playlist order; the screen sorts them by the chosen category order.
     return buildList {
         add(LiveTvCategoryFilterOption(allChannelsLabel, LiveTvChannelFilterMode.All))
         add(LiveTvCategoryFilterOption(favoritesLabel, LiveTvChannelFilterMode.Favorites))
@@ -1770,16 +1831,6 @@ private fun categoryNameForChannel(
 // Category sidebar layout ----------------------------------------------------------------------
 
 private val LiveTvSidebarMinHeight = 320.dp
-private val LiveTvSidebarMinWidth = 112.dp
-private val LiveTvSidebarMaxWidth = 240.dp
-
-private class LiveTvSidebarEntry(
-    val key: String,
-    val label: String,
-    val count: Int,
-    val selected: Boolean,
-    val onClick: () -> Unit,
-)
 
 @Composable
 private fun LiveTvLayoutMenuButton(
@@ -1839,232 +1890,4 @@ private fun LiveTvChannelViewMode.label(): StringResource = when (this) {
     LiveTvChannelViewMode.List -> Res.string.live_tv_action_list_view
     LiveTvChannelViewMode.Grid -> Res.string.live_tv_action_grid_view
     LiveTvChannelViewMode.Sidebar -> Res.string.live_tv_action_sidebar_view
-}
-
-@Composable
-private fun LiveTvSidebarLayout(
-    entries: List<LiveTvSidebarEntry>,
-    channels: List<LiveTvChannel>,
-    favoriteChannelIds: Set<String>,
-    epgPrograms: Map<String, List<LiveTvEpgProgram>>,
-    nowMillis: Long,
-    onFavoriteClick: (LiveTvChannel) -> Unit,
-    onPlayClick: (LiveTvChannel) -> Unit,
-    onGuideClick: (LiveTvChannel) -> Unit,
-    onClearRecents: (() -> Unit)?,
-    modifier: Modifier = Modifier,
-) {
-    val tokens = MaterialTheme.nuvio
-    val selectedEntry = entries.firstOrNull { it.selected } ?: entries.firstOrNull()
-    // A fresh scroll position for each category, so switching always starts at the top.
-    val channelListState = rememberLazyListState()
-    LaunchedEffect(selectedEntry?.key) { channelListState.scrollToItem(0) }
-
-    BoxWithConstraints(modifier = modifier) {
-        val sidebarWidth = (maxWidth * 0.34f).coerceIn(LiveTvSidebarMinWidth, LiveTvSidebarMaxWidth)
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Surface(
-                modifier = Modifier
-                    .width(sidebarWidth)
-                    .fillMaxHeight(),
-                color = tokens.colors.surface,
-                shape = tokens.shapes.compactCard,
-            ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 6.dp),
-                ) {
-                    items(items = entries, key = { it.key }) { entry ->
-                        LiveTvSidebarCategoryItem(entry = entry)
-                    }
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 4.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = selectedEntry?.label.orEmpty(),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = tokens.colors.textPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = stringResource(Res.string.live_tv_sidebar_channel_count, channels.size),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = tokens.colors.textMuted,
-                        )
-                    }
-                    if (onClearRecents != null) {
-                        LiveTvPanelFilterChip(
-                            label = stringResource(Res.string.live_tv_action_clear_recents),
-                            selected = false,
-                            onClick = onClearRecents,
-                        )
-                    }
-                }
-                if (channels.isEmpty()) {
-                    HomeEmptyStateCard(
-                        title = stringResource(Res.string.live_tv_no_matching_channels_title),
-                        message = stringResource(Res.string.live_tv_no_matching_channels_message),
-                    )
-                } else {
-                    LazyColumn(
-                        state = channelListState,
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(items = channels, key = { "sidebar-channel:${it.id}" }) { channel ->
-                            LiveTvSidebarChannelRow(
-                                channel = channel,
-                                isFavorite = channel.id in favoriteChannelIds,
-                                programs = epgPrograms[channel.id].orEmpty(),
-                                nowMillis = nowMillis,
-                                onFavoriteClick = { onFavoriteClick(channel) },
-                                onPlayClick = { onPlayClick(channel) },
-                                onGuideClick = { onGuideClick(channel) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LiveTvSidebarCategoryItem(entry: LiveTvSidebarEntry) {
-    val tokens = MaterialTheme.nuvio
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (entry.selected) tokens.colors.overlaySelected else Color.Transparent)
-            .clickable(onClick = entry.onClick)
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height(18.dp)
-                .clip(RoundedCornerShape(99.dp))
-                .background(if (entry.selected) tokens.colors.accent else Color.Transparent),
-        )
-        Text(
-            text = entry.label,
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 8.dp, end = 4.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = if (entry.selected) tokens.colors.textPrimary else tokens.colors.textSecondary,
-            fontWeight = if (entry.selected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = entry.count.toString(),
-            modifier = Modifier.padding(end = 8.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (entry.selected) tokens.colors.accent else tokens.colors.textMuted,
-        )
-    }
-}
-
-@Composable
-private fun LiveTvSidebarChannelRow(
-    channel: LiveTvChannel,
-    isFavorite: Boolean,
-    programs: List<LiveTvEpgProgram>,
-    nowMillis: Long,
-    onFavoriteClick: () -> Unit,
-    onPlayClick: () -> Unit,
-    onGuideClick: () -> Unit,
-) {
-    val tokens = MaterialTheme.nuvio
-    val current = programs.firstOrNull { it.isAiringAt(nowMillis) }
-    val progress = current?.let {
-        val duration = (it.endMillis - it.startMillis).coerceAtLeast(1L)
-        ((nowMillis - it.startMillis).toFloat() / duration).coerceIn(0f, 1f)
-    }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onPlayClick,
-        color = tokens.colors.surface,
-        shape = tokens.shapes.compactCard,
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 10.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            ChannelLogo(
-                channel = channel,
-                modifier = Modifier.size(44.dp),
-                shape = RoundedCornerShape(10.dp),
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(
-                    text = channel.name,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = tokens.colors.textPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (current != null) {
-                    Text(
-                        text = current.title,
-                        modifier = Modifier.clickable(onClick = onGuideClick),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = tokens.colors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (progress != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .clip(RoundedCornerShape(99.dp))
-                            .background(tokens.colors.overlaySelected),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(progress)
-                                .fillMaxHeight()
-                                .background(tokens.colors.accent),
-                        )
-                    }
-                }
-            }
-            IconButton(onClick = onFavoriteClick) {
-                Icon(
-                    imageVector = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = if (isFavorite) tokens.colors.warning else tokens.colors.textMuted,
-                )
-            }
-        }
-    }
 }
