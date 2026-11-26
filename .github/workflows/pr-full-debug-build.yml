@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   full-debug-build:
-    name: Build fullDebug APK
+    name: Build release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -47,10 +47,23 @@ jobs:
           rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
           cargo install cargo-ndk --locked
 
-      - name: Build fullDebug APK
+      - name: Create a signing key for this build
+        run: |
+          # A throwaway key: release builds must be signed to install, and a fork has no release key.
+          keytool -genkeypair -v -keystore ci-release.jks -alias nuvio -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass nuvio-ci-pass -keypass nuvio-ci-pass -dname "CN=Nuvio fork build"
+          {
+            echo ""
+            echo "NUVIO_RELEASE_STORE_FILE=ci-release.jks"
+            echo "NUVIO_RELEASE_STORE_PASSWORD=nuvio-ci-pass"
+            echo "NUVIO_RELEASE_KEY_ALIAS=nuvio"
+            echo "NUVIO_RELEASE_KEY_PASSWORD=nuvio-ci-pass"
+          } >> local.properties
+
+      - name: Build optimized release APK
         run: |
           set -o pipefail
-          ./gradlew :androidApp:assembleFullDebug -Pnuvio.android.distribution=full -Pnuvio.ios.distribution=appstore --stacktrace 2>&1 | tee build.log
+          ./gradlew :androidApp:assembleFullRelease -Pnuvio.android.distribution=full -Pnuvio.ios.distribution=appstore --stacktrace 2>&1 | tee build.log
 
       - name: Report compile errors
         if: failure()
@@ -59,10 +72,10 @@ jobs:
             echo "::error::${line}"
           done
 
-      - name: Upload fullDebug APK
+      - name: Upload release APKs
         uses: actions/upload-artifact@v7
         with:
-          path: androidApp/build/outputs/apk/full/debug/androidApp-full-debug.apk
-          archive: false
+          name: nuvio-fork-release-apks
+          path: androidApp/build/outputs/apk/full/release/*.apk
           if-no-files-found: error
           retention-days: 7
