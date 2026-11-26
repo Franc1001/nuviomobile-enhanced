@@ -87,11 +87,11 @@ actual object LiveTvStorage {
     actual fun loadXtreamSettings(): LiveTvXtreamSettings =
         NSUserDefaults.standardUserDefaults.stringForKey(ProfileScopedKey.of(xtreamSettingsKey))
             ?.split('\u001F')
-            ?.let { LiveTvXtreamSettings(it.getOrNull(0).orEmpty(), it.getOrNull(1).orEmpty(), it.getOrNull(2).orEmpty(), it.getOrNull(3) != "false") }
+            ?.let { LiveTvXtreamSettings(it.getOrNull(0).orEmpty(), it.getOrNull(1).orEmpty(), it.getOrNull(2).orEmpty(), it.getOrNull(3) != "false", it.getOrNull(4).orEmpty().split("\u001E").filter(String::isNotBlank)) }
             ?: LiveTvXtreamSettings()
 
     actual fun saveXtreamSettings(settings: LiveTvXtreamSettings) {
-        NSUserDefaults.standardUserDefaults.setObject(listOf(settings.serverUrl, settings.username, settings.password, settings.isEnabled).joinToString("\u001F"), forKey = ProfileScopedKey.of(xtreamSettingsKey))
+        NSUserDefaults.standardUserDefaults.setObject(listOf(settings.serverUrl, settings.username, settings.password, settings.isEnabled, settings.backupServerUrls.joinToString("\u001E")).joinToString("\u001F"), forKey = ProfileScopedKey.of(xtreamSettingsKey))
     }
 
     actual fun publishNavigationVisibility(visible: Boolean) {
@@ -120,5 +120,16 @@ actual object LiveTvStorage {
             enabled,
             forKey = ProfileScopedKey.of(epgAutoDetectEnabledKey),
         )
+    }
+
+    actual fun loadValue(key: String): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey(ProfileScopedKey.of("option_$key"))
+
+    actual fun saveValue(key: String, value: String?) {
+        if (value == null) {
+            NSUserDefaults.standardUserDefaults.removeObjectForKey(ProfileScopedKey.of("option_$key"))
+        } else {
+            NSUserDefaults.standardUserDefaults.setObject(value, forKey = ProfileScopedKey.of("option_$key"))
+        }
     }
 }

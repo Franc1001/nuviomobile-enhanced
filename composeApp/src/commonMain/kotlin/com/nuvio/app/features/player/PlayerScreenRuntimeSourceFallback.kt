@@ -4,6 +4,8 @@ import com.nuvio.app.features.streams.SmartStreamRanking
 import com.nuvio.app.features.streams.SmartStreamSettingsRepository
 import com.nuvio.app.features.streams.currentSmartDeviceProfile
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.logging.InAppLogger
+import com.nuvio.app.features.livetv.LiveTvRepository
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.debrid.DebridSettingsRepository
@@ -55,6 +57,31 @@ internal fun PlayerScreenRuntime.playReplacementSource(stream: StreamItem, url: 
     currentStreamInfoHash = stream.infoHash
     showSourcesPanel = false
     controlsVisible = true
+}
+
+/**
+ * When a live Xtream channel fails, plays the same channel from the account's next backup server.
+ * Each server is tried once per channel; the one that works stays in use for later channels.
+ *
+ * Returns `true` when another server is being tried and the error must not be shown yet.
+ */
+internal fun PlayerScreenRuntime.tryXtreamServerFailoverAfterError(message: String?): Boolean {
+    if (!isLiveTvPlayback) return false
+    val failedUrl = activeSourceUrl
+    if (failedUrl.isBlank()) return false
+    val nextUrl = LiveTvRepository.nextXtreamServerUrl(failedUrl) ?: return false
+    InAppLogger.info(
+        "Player/LiveTV",
+        "xtream server failover after error=${message.orEmpty()} next=${InAppLogger.redactUrl(nextUrl)}",
+    )
+    activeSourceUrl = nextUrl
+    activePlaybackSourceUrl = nextUrl
+    activeSourceResponseHeaders = emptyMap()
+    initialLoadCompleted = false
+    playbackSnapshot = playbackSnapshot.copy(isLoading = true, videoWidth = 0, videoHeight = 0)
+    errorMessage = null
+    shouldPlay = true
+    return true
 }
 
 /** Shows [message] as the playback error unless the next matching source is tried instead. */
